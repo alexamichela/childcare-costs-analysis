@@ -1,0 +1,404 @@
+---
+title: "Stat260_12_05_Meeting"
+author: "Karen Cordova"
+date: "2023-12-05"
+output: pdf_document
+---
+
+```{r, echo = FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidytuesdayR)
+# Data set was retrieved and downloaded from tidy tuesday 05/09/2023
+tuesdata <- tidytuesdayR::tt_load('2023-05-09')
+childcare_costs <- tuesdata$childcare_costs
+counties <- tuesdata$counties
+
+# merge the two data sets from the original data into one, using the county_fips_code to combine them
+
+fips <- merge(childcare_costs, counties, by = "county_fips_code")
+```
+
+Filter for 2018 only
+```{r, echo = FALSE}
+library("tidyverse")
+
+#create a tibble that filters the data frame to include only the data collected for 2018 and removes the superflous variables county_fips_code, county_name, state_name, and study_year
+
+fips2018 <- fips %>%
+  filter(study_year ==2018) %>%
+  select(-c(county_fips_code, county_name, state_name))%>%
+  select(-c(study_year))
+```
+
+Remove the states that did not have data
+```{r, echo = FALSE}
+# Create a tibble removing the rows from states that did not submit any data in 2018
+na_fips2018<- fips2018 %>%
+  filter(state_abbreviation != "CO")%>%
+  filter(state_abbreviation != "NM") %>%
+  filter(state_abbreviation != "IN")
+
+unique(na_fips2018$state_abbreviation)
+
+#Add a column to represent the 'missingness' status of mc_infanct data in every row:
+na_fips2018$missing <- rep(0,nrow(na_fips2018))
+
+# For every county with missing mc data, we input a 1
+na_mc <- is.na(na_fips2018$mc_infant)
+na_fips2018$missing[na_mc] <-  1
+```
+
+```{r, echo = FALSE}
+#Tree model to predict whether a county will have missing data
+library(party)
+
+# Delete counties with missing mc_data from the data frame
+no_na <- na_fips2018[,-c(52:59)]
+str(no_na)
+
+no_na$state_factor <- as.factor(no_na$state_abbreviation)
+names(no_na)
+no_na_tree <- no_na[,-52]
+
+#Generate tree to identify the types of counties that could be expected to have missing data
+missing_county <- ctree(as.factor(missing)~.,data = no_na_tree)
+plot(missing_county,horizontal=TRUE)
+summary(missing_county)
+```
+
+
+Based on the tree model above, we then want to focus on a subset of the data with no missing mc_infant data. This includes counties in Alabama, Arkansas, Arizona, California, Connecticut, Delaware, Idaho, Illinois, Kansas, Kentucky, Massachusetts, Maryland, Maine, Michigan, Minnesota, Mississippi, North Carolina, North Dakota, Nebraska, New Hampshire, New Jersey, New York, Ohio, Oklahoma, Oregon, Pennsylvania, Rhode Island, South Carolina, South Dakota, Tennessee, Texas, Utah, Virginia, Vermont, Washington, Wisconsin, West Virginia, and Wyoming with less than or equal to 10.4% of the population identifying as solely American Indian or Alaska Native and counties in Alaska, Hawaii, and Missouri with greater than 6227 households with children under 6 with two working parents.
+
+Additionally, our variables of interest are "h_under6_both_work", "h_under6_f_work", "h_under6_m_work", and "h_under6_single_m". We want to transform these columns to instead be the proportion of households, rather than number of households so that it can be compared across counties of different sizes.
+```{r, echo = FALSE}
+# create new columns that are transformed versions of our variables of interest
+na_fips2018$h_under6_bothper <- (na_fips2018$h_under6_both_work/na_fips2018$households)*100
+
+na_fips2018$h_under6_fper <- (na_fips2018$h_under6_f_work/na_fips2018$households)*100
+
+na_fips2018$h_under6_mper <- (na_fips2018$h_under6_m_work/na_fips2018$households)*100
+
+na_fips2018$h_under6_singleper <- (na_fips2018$h_under6_single_m/na_fips2018$households)*100
+
+# create data frame that is just this subset of the data
+childcare2018.subset <- na_fips2018 %>%
+  # FILTER for counties in Alabama, Arkansas, Arizona, California, Connecticut, Delaware, Idaho, Illinois, Kansas, Kentucky, Massachusetts, Maryland, Maine, Michigan, Minnesota, Mississippi, North Carolina, North Dakota, Nebraska, New Hampshire, New Jersey, New York, Ohio, Oklahoma, Oregon, Pennsylvania, Rhode Island, South Carolina, South Dakota, Tennessee, Texas, Utah, Virginia, Vermont, Washington, Wisconsin, West Virginia, and Wyoming with less than or equal to 10.4% of the population identifying as solely American Indian or Alaska Native
+  # OR counties in Alaska, Hawaii, and Missouri with greater than 6227 households with children under 6 with two working parents
+  filter(((state_abbreviation == 'AK' | state_abbreviation == "HI" | state_abbreviation == 'MO') & h_under6_both_work > 6227) | ((state_abbreviation == 'AL'| 
+state_abbreviation == 'AR' |                state_abbreviation == 'AZ' |  state_abbreviation == 'CA' | state_abbreviation == 'CT' | state_abbreviation == 'DE' | state_abbreviation == 'ID' | state_abbreviation == 'IL' | state_abbreviation == 'KS' | state_abbreviation == 'KY' | state_abbreviation == 'ME' | state_abbreviation == 'MD' | state_abbreviation == 'MA' | state_abbreviation == 'MI' | state_abbreviation == 'MN' | state_abbreviation == 'MS' | state_abbreviation == 'NE' | state_abbreviation == 'NH' | state_abbreviation == 'NJ' | state_abbreviation == 'NY' | state_abbreviation == 'NC' | state_abbreviation == 'ND' | state_abbreviation == 'OH' | state_abbreviation == 'OK' | state_abbreviation == 'OR' | state_abbreviation == 'PA' | state_abbreviation == 'RI' | state_abbreviation == 'SC' | state_abbreviation == 'SD' | state_abbreviation == 'TN' | state_abbreviation == 'TX' | state_abbreviation == 'UT' | state_abbreviation == 'VT' | state_abbreviation == 'VA' | state_abbreviation == 'WA' | state_abbreviation == 'WV' | state_abbreviation == 'WI' | state_abbreviation == 'WY') & one_race_i <= 10.4)) #%>%
+  # selecting variables of interest
+#select(h_under6_bothprop:h_under6_singleprop, mc_infant)
+#summary(childcare2018.subset) # should be 2268 rows, according to the tree as 2260 + 8 = 2268
+
+#subset of data without any of the counties missing childcare costs. Includes the counties in Alaska, Hawaii, and Missouri that are not missing. 
+# New row values
+new_rows <- list(
+  na_fips2018[484, c(62:65, 54)],
+  na_fips2018[c(70,73,75,76,78,90,93),c(62:65, 54)],
+  na_fips2018[c(1330,1345,1351,1356,1359,1364,1365,1366,1375,1377,1392,1419,1423,1440,1442),c(62:65, 54)]
+)
+# Add the new rows to the tibble
+childcare2018.subset2 <- bind_rows(childcare2018.subset, .rows = new_rows)
+#nrow(childcare2018.subset2) Is 2291, which is total of 2268 + 23 = 2291!
+
+nrow(na_fips2018[na_fips2018$state_abbreviation == "NC",])
+nrow(na_fips2018[na_fips2018$state_abbreviation == "WI",])
+
+#Other missing data on the left hand side of the tree: 
+
+northcarolina <- na_fips2018[na_fips2018$state_abbreviation == "NC" & na_fips2018$missing == 0, c(62:65, 54)]
+
+wisconsin <- na_fips2018[na_fips2018$state_abbreviation == "WI" & na_fips2018$missing == 0, c(62:65, 54)]
+
+newrows2 <- list(
+  northcarolina,
+  wisconsin
+)
+
+#FINAL SUBSET OF ALL COUNTIES WITHOUT MISSING DATA
+childcare2018.subset3 <- bind_rows(childcare2018.subset2, .rows = newrows2)
+
+childcare2018.subset3 <- childcare2018.subset3[-2202, ]
+```
+Next, we investigate whether our variables of interest are possibly correlated by examining the scatterplots showing the relationships between all the predictors and the response. In order to do so clearly, we will take a random subset of 500 rows and make these plots to see if there’s a pattern.
+
+Also, there is an interesting pattern in the plots with mc_infant as the y-axis and with the 4 different predictor variables as the x-axes. Especially for h_under6_fper and h_under6_mper, there seems to be 2 lines with different slopes. Another predictor may be at play, so we'll examine the different counties with higher vs. lower mc_infant values. We see the threshold at 220, as that seemed to be where the distribution of points split off into two directions.
+```{r, echo=FALSE}
+library(dplyr)
+set.seed(123)
+random.subset <- sample_n(childcare2018.subset3, 500)
+random.subset2 <- random.subset %>%
+  select(mc_infant, h_under6_bothper:h_under6_singleper)
+plot(random.subset2, col=alpha("cornflower blue",.25),pch=16, lower.panel=NULL)
+
+random.subset$mcinfanbinary <- ifelse(random.subset$mc_infant >= 220, 1, 0)
+table(random.subset$state_abbreviation,random.subset$mcinfanbinary)
+```
+When looking at the geographic distribution of the states with larger mc_infant versus lower mc_infant, we did not find any relationship with geographic region and whether or not the mc_infant value exceeded our set threshold. We found that many states did not have any counties with mc_infant exceeding the threshold and some had a few that did. Only Massachusetts and Connecticut had only mc_infant values that exceeded this threshold. California had only 1/8 counties with mc_infant values below the threshold. Since these are relatively expensive states, we can consider a variable that is related to that to consider in our model, such as median household income.
+
+``` {r, echo=FALSE}
+lm.fit <- lm(mc_infant~h_under6_bothper+h_under6_fper+h_under6_mper+h_under6_singleper+mhi_2018, data=childcare2018.subset3)
+summary(lm.fit)
+
+plot(resid(lm.fit)~fitted(lm.fit), col=alpha("cornflower blue",.25),pch=16)
+```
+When running a linear regression on all of these variables of interest, we see that all variables have low p-values below the threshold of 0.05, so they are significant in the model.
+
+Next, we want to investigate if interaction terms improve the model.
+``` {r, echo=FALSE}
+lm.fit.i <- lm(mc_infant~h_under6_bothper+h_under6_mper+h_under6_fper+h_under6_singleper+mhi_2018+h_under6_bothper:h_under6_mper+h_under6_bothper:h_under6_fper+h_under6_mper:h_under6_fper+h_under6_bothper:h_under6_singleper+h_under6_mper:h_under6_singleper+h_under6_fper:h_under6_singleper+h_under6_bothper:mhi_2018+h_under6_mper:mhi_2018+h_under6_fper:mhi_2018+h_under6_singleper:mhi_2018, data=childcare2018.subset3)
+summary(lm.fit.i)
+```
+From the summary of the model with all of the possible interaction terms, we see that a few have high p-values and seem to be insignificant, such as h_under6_bothper:h_under6_mper, h_under6_bothper:h_under6_fper, h_under6_mper:h_under6_fper, and h_under6_bothper:mhi_2018. Thus, we will compare the models with and without these interaction terms.
+
+``` {r, echo=FALSE}
+lm.fit.i2 <- lm(mc_infant~h_under6_bothper+h_under6_mper+h_under6_fper+h_under6_singleper+mhi_2018+h_under6_bothper:h_under6_singleper+h_under6_mper:h_under6_singleper+h_under6_fper:h_under6_singleper+h_under6_mper:mhi_2018+h_under6_fper:mhi_2018+h_under6_singleper:mhi_2018, data=childcare2018.subset3)
+summary(lm.fit.i2)
+# VISUALIZATIONS
+par(mfrow=c(1,2))
+plot(lm.fit.i2$fitted.values, lm.fit.i2$residuals, col=alpha("cornflower blue",.25),pch=16,xlab="Fitted Values of Reduced Interaction Model", 
+     ylab="Residuals of Reduced Interaction Model")
+abline(h=0, col="red")
+plot(lm.fit.i$fitted.values, lm.fit.i$residuals, col=alpha("cornflower blue",.25),pch=16,xlab="Fitted Values of Full Interaction Model", 
+     ylab="Residuals of Full Interaction Model")
+abline(h=0, col="red")
+```
+From residuals vs. fitted values plots, we observed that there's no difference in how the two models fit the data. 
+``` {r, echo=FALSE}
+anova(lm.fit.i2, lm.fit.i)
+```
+From the ANOVA output, we see that the p-value for the F test is 0.2797. Thus, we do not have sufficient evidence to reject the null hypothesis that the coefficients for the specified interaction terms is zero. Thus, we can say that they are not significant to include in the model.
+
+```{r, echo=FALSE}
+data= matrix(c(0.5205, 0.5173, BIC(lm.fit.i), AIC(lm.fit.i), 0.5194, 0.517, BIC(lm.fit.i2), AIC(lm.fit.i2)), ncol=4, byrow=TRUE)
+ 
+# specify the column names and row names of matrix
+colnames(data) = c('R^2', 'adjusted R^2', 'BIC', 'AIC')
+rownames(data) <- c('full interaction model', 'reduced interaction model')
+ 
+# assign to table
+final=as.table(data)
+final
+```
+Looking at the model selection criteria, we see that the proportion of variability in the outcome that is explained by the model is highest for the model with all of the interaction term. However, we know that $R^2$ increases when terms are added to a linear regression model, even if that predictor is not useful. Thus, we look at adjusted $R^2$. We also find that the model with all of the interaction term has the highest adjusted $R^2$ value, which attempts to avoid overfitting. However, the change is not by much.
+We see that the reduced interaction model has the smallest AIC and BIC values by a significant amount. Thus, this model has the smallest residuals AND the fewest parameters. Thus, we can choose the reduced interaction model as our best interaction model.
+
+Now, we must compare the best first-order model and the best interaction model.
+```{r, echo=FALSE}
+# VISUALIZATIONS
+par(mfrow=c(1,2))
+plot(lm.fit$fitted.values, lm.fit$residuals,col=alpha("cornflower blue",.25),pch=16,xlab="Fitted Values of First Order Model", 
+     ylab="Residuals of First Order Model")
+abline(h=0,col="red")
+plot(lm.fit.i2$fitted.values, lm.fit.i2$residuals, col=alpha("cornflower blue",.25),pch=16, xlab="Fitted Values of Interaction Model", 
+     ylab="Residuals of Interaction Model")
+abline(h=0,col="red")
+```
+When looking at residuals vs fitted values plots for the two models, the interaction model better meets the normality assumptions because residual values are more equally spread across the y=0 line. Thus, this visualization leads us to say that the interaction model is better than the first order model for fitting the data. 
+``` {r, echo=FALSE}
+anova(lm.fit, lm.fit.i2)
+
+data2= matrix(c(0.504, 0.5029, BIC(lm.fit), AIC(lm.fit), 0.5194, 0.517, BIC(lm.fit.i2), AIC(lm.fit.i2)), ncol=4, byrow=TRUE)
+ 
+# specify the column names and row names of matrix
+colnames(data2) = c('R^2', 'adjusted R^2', 'BIC', 'AIC')
+rownames(data2) <- c('first-order model', 'interaction model')
+
+# assign to table
+final2=as.table(data2)
+final2
+```
+From the ANOVA output, we see that the p-value for the F test is 2.254e-13, or essentially zero. Thus, we have sufficient evidence to reject the null hypothesis that the coefficients for the interaction terms are zero. They are significant to include in the model. Looking at the model selection criteria, we see that the proportion of variability in the outcome that is explained by the model is highest for the model with the interaction terms. However, we know that $R^2$ increases when terms are added to a linear regression model, even if that predictor is not useful. Thus, we look at adjusted $R^2$. We also find that the model with the interaction terms has the highest adjusted $R^2$ value, which attempts to avoid overfitting. Thus, according to these criterion, the model with the interaction terms is best.
+We see that the interaction model has the smallest AIC and BIC values. Thus, this model has the smallest residuals AND the fewest parameters. Thus, we can choose the interaction model as our best final model.
+
+After selecting this model, we then perform model diagnostics to confirm that it meets all regression assumptions. First, to check for linearity, we examine the residual plot.
+```{r, echo=FALSE}
+plot(resid(lm.fit.i2)~fitted(lm.fit.i2), col=alpha("cornflower blue",.25),pch=16)
+abline(h=0, col='red')
+```
+Looking at the residual plot, the residuals are roughly equally above and below 0. Normality is roughly met. There is some slight spread in the scatter of points at around 200 for the fitted values. The equal variance assumption is not entirely met.
+```{r, echo=FALSE}
+coef(lm.fit.i2)
+
+# Final Model Selection Criteria Table
+data3= matrix(c(0.504, 0.5029, BIC(lm.fit), AIC(lm.fit), 0.5194, 0.517, BIC(lm.fit.i2), AIC(lm.fit.i2), 0.5205, 0.5173, BIC(lm.fit.i), AIC(lm.fit.i)), ncol=4, byrow=TRUE)
+ 
+# specify the column names and row names of matrix
+colnames(data3) = c('R^2', 'adjusted R^2', 'BIC', 'AIC')
+rownames(data3) <- c('first-order model', 'reduced interaction model', 'full interaction model')
+
+# assign to table
+final3=as.table(data3)
+final3
+
+# Final Residual Plots Comparison
+par(mfrow=c(1,3))
+plot(lm.fit$fitted.values, lm.fit$residuals,col=alpha("cornflower blue",.25),pch=16,xlab="Fitted Values of First Order Model", 
+     ylab="Residuals of First Order Model")
+abline(h=0,col="red")
+plot(lm.fit.i2$fitted.values, lm.fit.i2$residuals, col=alpha("cornflower blue",.25),pch=16,xlab="Fitted Values of Reduced Interaction Model", 
+     ylab="Residuals of Reduced Interaction Model")
+abline(h=0, col="red")
+plot(lm.fit.i$fitted.values, lm.fit.i$residuals, col=alpha("cornflower blue",.25),pch=16,xlab="Fitted Values of Full Interaction Model", 
+     ylab="Residuals of Full Interaction Model")
+abline(h=0, col="red")
+
+```
+The equation for the reduced fit model (lm.fit.i2), our best model is:
+Mean(mc_infant) = 33.92 - 6.226(h_under6_bothper) - 44.42(h_under6_mper) + 3.532(h_under6_fper) - 4.639(h_under6_singleper) + 0.003215(mhi_2018) + 0.5312(h_under6_bothper*h_under6_singleper) + 2.846(h_under6_mper*h_under6_singleper) - 0.2639(h_under6_fper*h_under6_singleper) + 0.0007609(h_under6_mper*mhi_2018) - 0.00008431(h_under6_fper*mhi_2018) + 0.00006435(h_under6_singleper*mhi_2018)
+```{r, echo=FALSE}
+mboth<-median(childcare2018.subset3$h_under6_bothper)
+mmom<-median(childcare2018.subset3$h_under6_mper)
+mfath<-median(childcare2018.subset3$h_under6_fper)
+msing<-median(childcare2018.subset3$h_under6_singleper)
+mmhi<-median(na.omit(childcare2018.subset3$mhi_2018))
+
+#function that gives intercept and slope of regression equation depending on what you enter as values for bothper, mper, fper, singleper, mhi_2018
+regfunction<-function(both, mom, fath, sing, mhi) {
+  int<-0
+  slope<-0
+  if (both == "x") {
+    int<-33.92 - 44.42*mom + 3.532*fath - 4.639*sing + 0.003215*mhi + 2.846*mom*sing - 0.2639*fath*sing + 0.0007609*mom*mhi- 0.00008431*fath*mhi + 0.00006435*sing*mmhi
+    slope<- -6.226 + 0.5312*sing
+  }
+  if (mom == "x") {
+    int<-33.92 - 6.226*both + 3.532*fath - 4.639*sing + 0.003215*mhi + 0.5312*both*sing - 0.2639*fath*sing - 0.00008431*fath*mhi + 0.00006435*sing*mmhi
+    slope<- -44.42 + 2.846*sing + 0.0007609*mhi
+  }
+  if (fath == "x") {
+    int<-33.92 - 6.226*both -44.42*mom - 4.639*sing + 0.003215*mhi  + 0.5312*both*sing - 2.846*mom*sing + 0.0007609*mom*mhi+ 0.00006435*sing*mmhi
+    slope<- 3.532 - 0.2639*sing - 0.00008431*mhi
+  }
+  if (sing == "x") {
+    int<-33.92 - 6.226*both -44.42*mom + 3.532*fath + 0.003215*mhi + 0.0007609*mom*mhi - 0.00008431*fath*mhi
+    slope<- -4.639 + 0.5312*both + 2.846*mom - 0.2639*fath + 0.00006435*mhi
+  }
+   if (mhi == "x") {
+    int<-33.92 - 6.226*both - 44.42*mom + 3.532*fath - 4.639*sing + 0.5312*both*sing + 2.846*mom*sing - 0.2639*fath*sing
+    slope<- 0.003215 + 0.0007609*mom - 0.00008431*fath + 0.00006435*sing
+  }
+  print(int)
+  print(slope)
+}
+```
+Wrote a function that can give the slope and intercept of a line based on the values you enter for the variables bothprop, mprop, fprop, single prop, and mhi_2018. Used this to understand the relationships between the predictors, especially what the interaction terms mean, and how they are associated with mc_infant.
+```{r, echo=FALSE}
+#plug in median for all variables except bothper and plot the lines when singleper equal to 25th and 75th percentiles
+summary(childcare2018.subset3$h_under6_singleper)
+sing25<-2.867 #25th percentile of singleper
+sing75<-5.546 #75th percentile of singleper
+
+regfunction("x", mmom, mfath, msing, mmhi)
+regfunction("x", mmom, mfath, sing25, mmhi)
+regfunction("x", mmom, mfath, sing75, mmhi)
+  
+plot(childcare2018.subset3$h_under6_bothper, childcare2018.subset3$mc_infant, col=alpha("cornflower blue",.25),pch=16,
+     xlab="Percent of households with both parents working", ylab="Center-based childcare costs")
+abline(186.5447,-4.107074, col="red")
+abline(188.2227,-4.70305, col="blue")
+abline(184.2159,-3.279965)
+```
+First, we plugged in the median for all the variables except percent of households where both parents work (bothper). We also changed the values of the variables that interact with bothper, which was percent of households where only a single mom work (singleper), to its 25th or 75th percentiles. We plotted the slopes and intercepts of the lines to help us see the relationship between bothper and childcare costs and how the interaction terms change the association between bothper and childcare costs. 
+```{r, echo=FALSE}
+#plug in median for all variables except mper and plot the lines when singleper and mhi equal to 25th and 75th percentiles
+summary(childcare2018.subset3$mhi_2018)
+mhi25<-43245 #25th percentile of mhi
+mhi75<- 58314  #75th percentile of mhi
+
+regfunction(mboth, "x", mfath, msing, mmhi) #all set to median except mper
+regfunction(mboth, "x", mfath, sing25, mhi75) #low percent single moms, high median household income
+regfunction(mboth, "x", mfath, sing75, mhi25) #high percent single moms, low median household income
+
+plot(childcare2018.subset3$h_under6_mper, childcare2018.subset3$mc_infant, col=alpha("cornflower blue",.25),pch=16, xlab="Percent of households with only mother working", ylab="Mean center-based childcare costs")
+abline(158.7586,5.482005, col="red") #mmhi and msing
+abline(179.8674,8.110605,col="blue") #sing25, mhi75
+abline(138.7997,4.269037) #sing75, mhi25
+```
+Then, we plugged in the median for all the variables except percent of households where only the mom works (mper). We also changed the values of the variables that interact with mper, which were percent of households where only a single mom work (singleper) and median household income, to their 25th or 75th percentiles. We plotted the slopes and intercepts of the lines to help us see the relationship between mper and childcare costs and how the interaction terms change the association between mper and childcare costs. 
+```{r, echo=FALSE}
+#plug in median for all variables except fper and plot the lines when singleper and mhi equal to 25th and 75th percentiles
+regfunction(mboth, mmom, "x", msing, mmhi) #all set as median except fper
+regfunction(mboth, mmom, "x", sing25, mhi75) #low percent single moms, high median household income
+regfunction(mboth, mmom, "x", sing75, mhi25) #high percent single moms, low median household income
+
+plot(childcare2018.subset3$h_under6_fper, childcare2018.subset3$mc_infant, col=alpha("cornflower blue",.25),pch=16)
+abline(160.1541,-1.792079, col="red") #mmhi and msing
+abline(185.0755,-2.141055, col="blue") #mhi75 and sing25
+abline(136.5533,-1.577575) #mhi25 and sing75
+```
+Then, we plugged in the median for all the variables except percent of households where only the father works (fper). We also changed the values of the variables that interact with fper, which were percent of households where only a single mom work (singleper) and median household income, to their 25th or 75th percentiles. We plotted the slopes and intercepts of the lines to help us see the relationship between fper and childcare costs and how the interaction terms change the association between fper and childcare costs. 
+```{r, echo=FALSE}
+#plug in median for all variables except singleper and plot the lines when both, mper, fper, mhi equal to 25th and 75th percentiles
+summary(childcare2018.subset3$h_under6_bothper)
+both25<-5.057
+both75<-8.096
+summary(childcare2018.subset3$h_under6_mper)
+mom25<-0.09113
+mom75<-0.46604
+summary(childcare2018.subset3$h_under6_fper)
+fath25<-2.541
+fath75<-4.835 
+
+regfunction(mboth, mmom, mfath, "x", mmhi) #all set to median
+regfunction(both25, mmom, mfath, "x", mhi25) #bothper and mhi changed to 25th percentile
+regfunction(both75, mmom, mfath, "x", mhi75) #bothper and mhi changed to 75th percentile
+
+plot(childcare2018.subset3$h_under6_singleper, childcare2018.subset3$mc_infant, col=alpha("cornflower blue",.25),pch=16)
+abline(152.7684,1.89515,col="red") #all set to median
+abline(137.7688,0.7132829,col="blue") #both25 and mhi25
+abline(166.0926,3.29729,col="blue",lty=2) #both75 and mhi75
+abline(153.9141,1.339723) #mom25
+abline(151.7132,2.406717,lty=2) #mom75
+abline(153.4998,2.156174,col="purple") #fath25
+abline(151.8036,1.550787,col="purple",lty=2) #fath75
+```
+Lastly, we plugged in the median for all the variables except percent of households where only a single mother works (singleper). We also changed the values of the variables that interact with singleper, which were percent of households where only the mother works (mper), percent of households where only the father works (fper), percent of households where both parents work (bothper) and median household income, to their 25th or 75th percentiles. We plotted the slopes and intercepts of the lines to help us see the relationship between singleper and childcare costs and how the interaction terms change the association between singleper and childcare costs. 
+```{r, echo=FALSE}
+par(mfrow=c(1,4))
+plot(childcare2018.subset3$h_under6_bothper, childcare2018.subset3$mc_infant, col=alpha("cornflower blue",.25),pch=16,
+     xlab="% households with both parents working", ylab="Center-based childcare costs")
+abline(186.5447,-4.107074, col="red")
+abline(188.2227,-4.70305, col="blue")
+abline(184.2159,-3.279965)
+
+plot(childcare2018.subset3$h_under6_mper, childcare2018.subset3$mc_infant, col=alpha("cornflower blue",.25),pch=16, xlab="% households with only the mother working", ylab="Center-based childcare costs")
+abline(158.7586,5.482005, col="red") #mmhi and msing
+abline(179.8674,8.110605,col="blue") #sing25, mhi75
+abline(138.7997,4.269037) #sing75, mhi25
+
+plot(childcare2018.subset3$h_under6_fper, childcare2018.subset3$mc_infant, col=alpha("cornflower blue",.25),pch=16,
+     xlab="% households with only the father working",ylab="Center-based childcare costs")
+abline(160.1541,-1.792079, col="red") #mmhi and msing
+abline(185.0755,-2.141055, col="blue") #mhi75 and sing25
+abline(136.5533,-1.577575) #mhi25 and sing75
+
+plot(childcare2018.subset3$h_under6_singleper, childcare2018.subset3$mc_infant, col=alpha("cornflower blue",.25),pch=16, xlab="% households with a single mother working", ylab="Center-based childcare costs")
+abline(152.7684,1.89515,col="red") #all set to median
+abline(137.7688,0.7132829,col="blue") #both25 and mhi25
+abline(166.0926,3.29729,col="blue",lty=2) #both75 and mhi75
+abline(153.9141,1.339723) #mom25
+abline(151.7132,2.406717,lty=2) #mom75
+abline(153.4998,2.156174,col="purple") #fath25
+abline(151.8036,1.550787,col="purple",lty=2) #fath75
+```
+All plots showing how interaction terms change the slope of the lines for the relationship between bothper and childcare costs, mper and childcare costs, fper and childcare costs, and singleper and chilcare costs. 
+
+```{r, echo=FALSE}
+par(mfrow=c(2,2))
+plot(childcare2018.subset3$h_under6_bothper, childcare2018.subset3$mc_infant, col=alpha("cornflower blue",.25),pch=16,
+     xlab="% households with both parents working", ylab="Center-based childcare costs")
+abline(186.5447,-4.107074, col="red")
+
+plot(childcare2018.subset3$h_under6_mper, childcare2018.subset3$mc_infant, col=alpha("cornflower blue",.25),pch=16, xlab="% households with only the mother working", ylab="Center-based childcare costs")
+abline(158.7586,5.482005, col="red") #mmhi and msing
+
+
+plot(childcare2018.subset3$h_under6_fper, childcare2018.subset3$mc_infant, col=alpha("cornflower blue",.25),pch=16,
+     xlab="% households with only the father working",ylab="Center-based childcare costs")
+abline(160.1541,-1.792079, col="red") #mmhi and msing
+
+
+plot(childcare2018.subset3$h_under6_singleper, childcare2018.subset3$mc_infant, col=alpha("cornflower blue",.25),pch=16, xlab="% households with a single mother working", ylab="Center-based childcare costs")
+abline(152.7684,1.89515,col="red") #all set to median
+```
+Plots with just the lines when all the variables were set as the medians except for the variable of interest. 
